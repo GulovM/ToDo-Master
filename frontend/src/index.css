@@ -1,0 +1,145 @@
+/* Import Inter font */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom base styles */
+@layer base {
+  html {
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+  
+  body {
+    @apply bg-gray-50 text-gray-900 antialiased;
+  }
+  
+  * {
+    @apply border-gray-300;
+  }
+  
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="datetime-local"],
+  textarea,
+  select {
+    @apply block w-full rounded-lg border border-gray-300 px-3 py-2 shadow-sm placeholder-gray-400 focus:border-primary-500 focus:outline-none focus:ring-1 focus:ring-primary-500;
+  }
+  
+  button {
+    @apply inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+}
+
+/* Custom component styles */
+@layer components {
+  /* Input with leading icon helper */
+  .with-leading-icon {
+    padding-left: 2.5rem !important; /* prevent base px-3 from overriding */
+  }
+  .btn-primary {
+    @apply bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500;
+  }
+  
+  .btn-secondary {
+    @apply bg-gray-600 text-white hover:bg-gray-700 focus:ring-gray-500;
+  }
+  
+  .btn-success {
+    @apply bg-success-600 text-white hover:bg-success-700 focus:ring-success-500;
+  }
+  
+  .btn-danger {
+    @apply bg-danger-600 text-white hover:bg-danger-700 focus:ring-danger-500;
+  }
+  
+  .btn-outline {
+    @apply border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 focus:ring-primary-500;
+  }
+  
+  .card {
+    @apply bg-white rounded-lg shadow-soft border border-gray-200;
+  }
+  
+  .input-error {
+    @apply border-danger-300 focus:border-danger-500 focus:ring-danger-500;
+  }
+  
+  .text-error {
+    @apply text-danger-600 text-sm;
+  }
+  
+  .task-card {
+    @apply card p-4 hover:shadow-medium transition-shadow duration-200;
+  }
+  
+  .task-completed {
+    @apply opacity-75 bg-gray-50;
+  }
+  
+  .priority-high {
+    @apply border-l-4 border-l-danger-500;
+  }
+  
+  .priority-medium {
+    @apply border-l-4 border-l-warning-500;
+  }
+  
+  .priority-low {
+    @apply border-l-4 border-l-success-500;
+  }
+  
+  .category-badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+  
+  .loading-spinner {
+    @apply animate-spin h-5 w-5 border-2 border-gray-300 border-t-primary-600 rounded-full;
+  }
+  
+  .toast {
+    @apply fixed top-4 right-4 z-50 max-w-sm w-full bg-white rounded-lg shadow-strong border border-gray-200 p-4 animate-slide-in;
+  }
+  
+  .toast-success {
+    @apply border-l-4 border-l-success-500;
+  }
+  
+  .toast-error {
+    @apply border-l-4 border-l-danger-500;
+  }
+  
+  .toast-warning {
+    @apply border-l-4 border-l-warning-500;
+  }
+  
+  .toast-info {
+    @apply border-l-4 border-l-primary-500;
+  }
+}
+
+/* Custom utility styles */
+@layer utilities {
+  .text-gradient {
+    @apply bg-gradient-to-r from-primary-600 to-primary-800 bg-clip-text text-transparent;
+  }
+  
+  .bg-gradient-primary {
+    @apply bg-gradient-to-r from-primary-500 to-primary-700;
+  }
+  
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  
+  .backdrop-blur-sm {
+    backdrop-filter: blur(4px);
+  }
+}

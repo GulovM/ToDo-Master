@@ -249,6 +249,11 @@ class GoogleLoginView(APIView):
                 from google.auth.transport import requests as _requests  # type: ignore
             except Exception as e:
                 return Response({'error': 'google_auth_library_missing', 'detail': str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        # Ensure underlying 'requests' package is available for transport
+        try:
+            import requests as _py_requests  # noqa: F401
+        except Exception as e:
+            return Response({'error': 'requests_library_missing', 'detail': str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         try:
             idinfo = _id_token.verify_oauth2_token(id_tok, _requests.Request(), client_id)

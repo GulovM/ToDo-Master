@@ -240,11 +240,18 @@ class GoogleLoginView(APIView):
             return Response({'error': 'id_token_missing'}, status=status.HTTP_400_BAD_REQUEST)
         if not client_id:
             return Response({'error': 'client_id_missing'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
-        if google_id_token is None or google_requests is None:
-            return Response({'error': 'google_auth_library_missing'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        # Try a late import in case the module became available after startup
+        _id_token = google_id_token
+        _requests = google_requests
+        if _id_token is None or _requests is None:
+            try:
+                from google.oauth2 import id_token as _id_token  # type: ignore
+                from google.auth.transport import requests as _requests  # type: ignore
+            except Exception as e:
+                return Response({'error': 'google_auth_library_missing', 'detail': str(e)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         try:
-            idinfo = google_id_token.verify_oauth2_token(id_tok, google_requests.Request(), client_id)
+            idinfo = _id_token.verify_oauth2_token(id_tok, _requests.Request(), client_id)
             if idinfo.get('iss') not in ['accounts.google.com', 'https://accounts.google.com']:
                 raise ValueError('Wrong issuer')
             email = idinfo.get('email')

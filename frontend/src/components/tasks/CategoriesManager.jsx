@@ -129,7 +129,8 @@ const CategoriesManager = () => {
 
       {/* List */}
       <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
-        <div className="grid grid-cols-12 gap-4 px-4 py-3 bg-gray-50 border-b text-sm font-medium text-gray-700">
+        {/* Header (desktop only) */}
+        <div className="hidden md:grid grid-cols-12 gap-4 px-4 py-3 bg-gray-50 border-b text-sm font-medium text-gray-700">
           <div className="col-span-4">Название</div>
           <div className="col-span-2">Цвет</div>
           <div className="col-span-4">Описание</div>
@@ -137,17 +138,25 @@ const CategoriesManager = () => {
         </div>
         <div className="divide-y">
           {categories.map((c) => (
-            <div key={c.id} className="grid grid-cols-12 gap-4 px-4 py-3 items-center">
-              <div className="col-span-4 flex items-center space-x-2">
-                <span className="inline-block h-3 w-3 rounded-full" style={{ backgroundColor: c.color }} />
-                <span className="font-medium text-gray-900">{c.name}</span>
-                <span className="ml-2 text-xs text-gray-500">{c.task_count || 0} задач</span>
+            <div key={c.id} className="px-4 py-3 md:grid md:grid-cols-12 md:gap-4 items-start">
+              {/* Name + count */}
+              <div className="flex items-center md:col-span-4">
+                <span className="inline-block h-3 w-3 rounded-full mr-2" style={{ backgroundColor: c.color }} />
+                <div className="min-w-0">
+                  <div className="font-medium text-gray-900 truncate">{c.name}</div>
+                  <div className="text-xs text-gray-500 md:hidden mt-0.5">{c.task_count || 0} задач</div>
+                </div>
               </div>
-              <div className="col-span-2">
+              {/* Color */}
+              <div className="mt-2 md:mt-0 md:col-span-2">
                 <code className="text-xs bg-gray-100 px-2 py-1 rounded border border-gray-200">{c.color}</code>
               </div>
-              <div className="col-span-4 text-gray-700 truncate">{c.description || '-'}</div>
-              <div className="col-span-2 flex items-center justify-end space-x-2">
+              {/* Description */}
+              <div className="mt-2 md:mt-0 md:col-span-4 text-gray-700">
+                <div className="md:truncate">{c.description || '-'}</div>
+              </div>
+              {/* Actions */}
+              <div className="mt-3 md:mt-0 md:col-span-2 flex items-center justify-start md:justify-end space-x-2">
                 <button onClick={() => startEdit(c)} className="btn-outline text-xs">Изменить</button>
                 <button onClick={() => handleDelete(c.id)} className="btn-danger text-xs">Удалить</button>
               </div>

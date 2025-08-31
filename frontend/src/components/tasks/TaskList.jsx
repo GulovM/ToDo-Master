@@ -235,9 +235,9 @@ const TaskList = () => {
             </div>
 
             {/* Search and Controls (global) */}
-            <div className="flex items-center justify-between space-x-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               {/* Search */}
-              <div className="flex-1 max-w-lg relative">
+              <div className="w-full sm:flex-1 sm:max-w-lg relative">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <MagnifyingGlassIcon className="h-5 w-5 text-gray-400" />
                 </div>
@@ -251,7 +251,7 @@ const TaskList = () => {
               </div>
 
               {/* Action Buttons */}
-              <div className="flex items-center space-x-2">
+              <div className="flex flex-wrap items-center gap-2">
                 {/* Selection toggle */}
                 <button
                   onClick={() => setSelectionMode((v) => !v)}
@@ -272,7 +272,7 @@ const TaskList = () => {
 
                 {/* Bulk Actions */}
                 {selectedTasks.length > 0 && (
-                  <div className="flex items-center space-x-2">
+                  <div className="flex items-center gap-2">
                     <span className="text-sm text-gray-600">{selectedTasks.length} выбрано</span>
                     <button
                       onClick={() => handleBulkAction('complete')}

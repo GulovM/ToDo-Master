@@ -371,10 +371,10 @@ def ai_assist(request):
     Body: {"message": "..."}
     """
     api_key = config('OPENAI_API_KEY', default=None)
+    # Optional custom base URL (for providers like OpenRouter)
+    base_url_env = config('OPENAI_BASE_URL', default=None)
     if not api_key or OpenAI is None:
-        return Response({
-            'error': 'Сервис ИИ пока что недоступен'
-        }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        return Response({'error': 'Сервис ИИ пока что недоступен'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
     user = request.user
     user_message = (request.data or {}).get('message', '').strip()
@@ -408,9 +408,24 @@ def ai_assist(request):
     )
 
     try:
-        client = OpenAI(api_key=api_key, timeout=30)
+        # Auto-detect OpenRouter key and set base URL if needed
+        is_openrouter_key = api_key.startswith('sk-or-')
+        base_url = base_url_env or ('https://openrouter.ai/api/v1' if is_openrouter_key else None)
+
+        # Normalize model id: OpenRouter expects vendor prefix (e.g. "openai/gpt-4o-mini")
+        configured_model = config('OPENAI_MODEL', default='gpt-4o-mini')
+        model = configured_model
+        if is_openrouter_key and '/' not in configured_model:
+            model = f'openai/{configured_model}'
+
+        # Build client
+        if base_url:
+            client = OpenAI(api_key=api_key, base_url=base_url, timeout=30)
+        else:
+            client = OpenAI(api_key=api_key, timeout=30)
+
         completion = client.chat.completions.create(
-            model=config('OPENAI_MODEL', default='gpt-4o-mini'),
+            model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": content},
@@ -418,9 +433,7 @@ def ai_assist(request):
             temperature=0.2,
         )
         answer = completion.choices[0].message.content
-        return Response({
-            'reply': answer,
-            'source': 'openai'
-        })
-    except Exception as e:
+        return Response({'reply': answer, 'source': 'openai' if not is_openrouter_key else 'openrouter'})
+    except Exception:
+        # Hide provider errors from clients, surface as 503
         return Response({'error': 'Сервис ИИ пока что недоступен'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)

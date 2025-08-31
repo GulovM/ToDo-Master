@@ -92,10 +92,12 @@ export const API_ENDPOINTS = {
     login: '/auth/login/',
     logout: '/auth/logout/',
     profile: '/auth/profile/',
+    deleteAccount: '/auth/delete-account/',
     changePassword: '/auth/change-password/',
     userStats: '/auth/stats/',
     token: '/auth/token/',
     tokenRefresh: '/auth/token/refresh/',
+    google: '/auth/google/',
   },
   
   // Tasks

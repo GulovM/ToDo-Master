@@ -541,7 +541,17 @@ const TaskList = () => {
 
       {/* AI Chat */}
       {showAi && (
-        <AiChatModal onClose={() => setShowAi(false)} />
+        <AiChatModal
+          onClose={() => setShowAi(false)}
+          onRefresh={async () => {
+            try {
+              await loadTasks();
+              await loadCategories();
+              await loadStats();
+            } catch (_) {}
+          }}
+          onNotify={(t) => setToast(t)}
+        />
       )}
     </div>
   );

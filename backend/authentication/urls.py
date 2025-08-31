@@ -16,8 +16,12 @@ urlpatterns = [
     
     # User profile endpoints
     path('profile/', views.UserProfileView.as_view(), name='user_profile'),
+    path('delete-account/', views.DeleteAccountView.as_view(), name='delete_account'),
     path('change-password/', views.ChangePasswordView.as_view(), name='change_password'),
     path('stats/', views.user_stats, name='user_stats'),
+
+    # Social auth
+    path('google/', views.GoogleLoginView.as_view(), name='google_login'),
     
     # Health check
     path('health/', views.health_check, name='health_check'),

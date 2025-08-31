@@ -230,6 +230,36 @@ export const AuthProvider = ({ children }) => {
     }
   }, []);
 
+  // Google login
+  const loginWithGoogle = useCallback(async (idToken) => {
+    try {
+      dispatch({ type: 'AUTH_START' });
+      const response = await authService.loginWithGoogle(idToken);
+      if (response.success) {
+        dispatch({ type: 'AUTH_SUCCESS', payload: { user: response.user } });
+        return { success: true };
+      } else {
+        dispatch({ type: 'AUTH_FAILURE', payload: { error: response.error } });
+        return { success: false, error: response.error };
+      }
+    } catch (e) {
+      dispatch({ type: 'AUTH_FAILURE', payload: { error: { message: 'Google login failed' } } });
+      return { success: false, error: { message: 'Google login failed' } };
+    }
+  }, []);
+
+  // Delete account
+  const deleteAccount = useCallback(async () => {
+    try {
+      const res = await authService.deleteAccount();
+      dispatch({ type: 'AUTH_LOGOUT' });
+      return res;
+    } catch (e) {
+      dispatch({ type: 'AUTH_LOGOUT' });
+      return { success: true };
+    }
+  }, []);
+
   // Update profile function
   const updateProfile = useCallback(async (userData) => {
     try {
@@ -318,11 +348,13 @@ export const AuthProvider = ({ children }) => {
     login,
     register,
     logout,
+    loginWithGoogle,
+    deleteAccount,
     updateProfile,
     changePassword,
     clearError,
     refreshUser,
-  }), [state.user, state.isAuthenticated, state.isLoading, state.error, login, register, logout, updateProfile, changePassword, clearError, refreshUser]);
+  }), [state.user, state.isAuthenticated, state.isLoading, state.error, login, register, logout, loginWithGoogle, deleteAccount, updateProfile, changePassword, clearError, refreshUser]);
 
   return (
     <AuthContext.Provider value={value}>

@@ -4,10 +4,10 @@ import { useAuth } from '../context/AuthContext.jsx';
 import { cn, validation } from '../utils/index.js';
 import Toast from '../components/common/Toast.jsx';
 import LoadingSpinner from '../components/common/LoadingSpinner.jsx';
-import { HomeIcon, Squares2X2Icon, TagIcon, UserIcon, ArrowRightOnRectangleIcon, PencilSquareIcon, EnvelopeIcon, KeyIcon } from '@heroicons/react/24/outline';
+import { HomeIcon, Squares2X2Icon, TagIcon, UserIcon, ArrowRightOnRectangleIcon, PencilSquareIcon, EnvelopeIcon, KeyIcon, TrashIcon, ShieldExclamationIcon } from '@heroicons/react/24/outline';
 
 const ProfilePage = () => {
-  const { user, logout, updateProfile, changePassword, refreshUser } = useAuth();
+  const { user, logout, updateProfile, changePassword, refreshUser, deleteAccount } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
   const [toast, setToast] = useState(null);
@@ -102,6 +102,18 @@ const ProfilePage = () => {
     } else {
       setToast({ type: 'error', message: res.message || 'Не удалось сменить пароль' });
       if (res.error && typeof res.error === 'object') setPwdErrors((prev) => ({ ...prev, ...res.error }));
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    const ok = window.confirm('Вы уверены, что хотите навсегда удалить аккаунт? Это действие необратимо.');
+    if (!ok) return;
+    const res = await deleteAccount();
+    if (res.success) {
+      setToast({ type: 'success', message: 'Аккаунт удалён' });
+      navigate('/login');
+    } else {
+      setToast({ type: 'error', message: res.error?.message || 'Не удалось удалить аккаунт' });
     }
   };
 
@@ -300,6 +312,22 @@ const ProfilePage = () => {
                 </button>
               </div>
             </form>
+
+            {/* Danger zone */}
+            <div className="mt-8 pt-6 border-t">
+              <div className="flex items-center mb-3">
+                <div className="h-10 w-10 bg-red-600 rounded-lg flex items-center justify-center text-white">
+                  <ShieldExclamationIcon className="h-6 w-6" />
+                </div>
+                <div className="ml-3">
+                  <h3 className="text-lg font-semibold text-gray-900">Опасная зона</h3>
+                  <p className="text-sm text-gray-600">Удаление аккаунта без возможности восстановления</p>
+                </div>
+              </div>
+              <button onClick={handleDeleteAccount} className="btn-danger flex items-center">
+                <TrashIcon className="h-5 w-5 mr-2" />Удалить аккаунт
+              </button>
+            </div>
           </div>
         </div>
       </main>

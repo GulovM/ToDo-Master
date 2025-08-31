@@ -26,6 +26,33 @@ export const authService = {
     }
   },
 
+  // Login with Google ID token
+  loginWithGoogle: async (idToken) => {
+    try {
+      const response = await apiClient.post(API_ENDPOINTS.auth.google, { id_token: idToken });
+      if (response.data.tokens) {
+        setTokens(response.data.tokens.access, response.data.tokens.refresh);
+        localStorage.setItem('user', JSON.stringify(response.data.user));
+      }
+      return { success: true, user: response.data.user, message: response.data.message };
+    } catch (error) {
+      return { success: false, error: error.response?.data || { message: 'Google login failed' } };
+    }
+  },
+
+  // Delete account
+  deleteAccount: async () => {
+    try {
+      const refreshToken = localStorage.getItem('refreshToken');
+      const response = await apiClient.post(API_ENDPOINTS.auth.deleteAccount, { refresh_token: refreshToken });
+      clearTokens();
+      return { success: true, message: response.data?.message || 'Account deleted' };
+    } catch (error) {
+      clearTokens();
+      return { success: false, error: error.response?.data || { message: 'Failed to delete account' } };
+    }
+  },
+
   // Login user
   login: async (credentials) => {
     try {

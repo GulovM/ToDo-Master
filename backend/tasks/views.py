@@ -7,7 +7,7 @@ from django_filters.rest_framework import DjangoFilterBackend
 from django.utils import timezone
 from django.db.models import Q, Count, Case, When, IntegerField
 from django.db.models.functions import TruncDate
-from .models import Task, TaskCategory
+from .models import Task, TaskCategory, ChatSession, ChatMessage
 from .serializers import (
     TaskListSerializer,
     TaskDetailSerializer,
@@ -19,6 +19,10 @@ from .serializers import (
     TaskSearchSerializer
 )
 from decouple import config
+from django.conf import settings
+import json
+from datetime import datetime
+from django.utils.dateparse import parse_datetime
 try:
     from openai import OpenAI
 except Exception:  # pragma: no cover
@@ -377,9 +381,31 @@ def ai_assist(request):
         return Response({'error': 'Сервис ИИ пока что недоступен'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
     user = request.user
-    user_message = (request.data or {}).get('message', '').strip()
-    if not user_message:
+    data = request.data or {}
+    user_message = (data.get('message') or '').strip()
+    if not user_message and not data.get('confirm'):
         return Response({'error': 'message is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Chat session handling
+    chat_id = data.get('chat_id')
+    session = None
+    if chat_id:
+        try:
+            session = ChatSession.objects.get(id=chat_id, user=user)
+        except ChatSession.DoesNotExist:
+            return Response({'error': 'chat_not_found'}, status=status.HTTP_404_NOT_FOUND)
+    else:
+        # Create new chat session, keep only last 15 sessions
+        title = (user_message[:100] + '...') if len(user_message) > 100 else user_message
+        session = ChatSession.objects.create(user=user, title=title or 'Новый диалог')
+        # Retention: keep last 15 sessions
+        keep = 15
+        ids_to_keep = list(ChatSession.objects.filter(user=user).order_by('-updated_at').values_list('id', flat=True)[:keep])
+        ChatSession.objects.filter(user=user).exclude(id__in=ids_to_keep).delete()
+
+    # Save user message (only for regular prompts)
+    if user_message:
+        ChatMessage.objects.create(session=session, role='user', content=user_message)
 
     # Collect a concise snapshot of user's tasks
     tasks_qs = Task.objects.filter(user=user).select_related('category')
@@ -396,8 +422,9 @@ def ai_assist(request):
 
     system_prompt = (
         "Ты — помощник по планированию задач. Отвечай по-русски. "
-        "Учитывай ТОЛЬКО задачи текущего пользователя, которые я даю в контексте. "
-        "Помогай с приоритизацией, планированием, дедлайнами, списками. Если чего-то нет в списке — не выдумывай."
+        "Учитывай ТОЛЬКО задачи текущего пользователя, которые даются в контексте. "
+        "Не повторяй обратно список задач, если тебя об этом явно не попросили. "
+        "Никогда не утверждай, что уже выполнил какие‑либо изменения. Если пользователь просит создать/обновить/удалить — кратко подтверди намерение и жди подтверждения."
     )
 
     content = (
@@ -424,16 +451,433 @@ def ai_assist(request):
         else:
             client = OpenAI(api_key=api_key, timeout=30)
 
+        # Compute max_tokens with safe bounds (from env and optional request override)
+        try:
+            env_cap = config('OPENAI_MAX_TOKENS', default=512, cast=int)
+        except Exception:
+            env_cap = 512
+        env_cap = max(32, min(env_cap, 4096))
+        req_cap = None
+        if isinstance(request.data, dict) and request.data.get('max_tokens') is not None:
+            try:
+                req_cap = int(request.data.get('max_tokens'))
+            except Exception:
+                req_cap = None
+        max_tokens = env_cap if req_cap is None else max(32, min(req_cap, env_cap))
+
+        # Optional OpenRouter ranking headers
+        extra_headers = {}
+        referer = config('AI_REFERER', default=None)
+        site_title = config('AI_TITLE', default=None)
+        if referer:
+            extra_headers["HTTP-Referer"] = referer
+        if site_title:
+            extra_headers["X-Title"] = site_title
+
+        # Build chat history for the model (last 10 pairs to keep short)
+        history = list(session.messages.order_by('-created_at').values('role', 'content')[:10])
+        history.reverse()
+
         completion = client.chat.completions.create(
             model=model,
             messages=[
                 {"role": "system", "content": system_prompt},
+                *[{"role": m['role'], "content": m['content']} for m in history],
                 {"role": "user", "content": content},
             ],
             temperature=0.2,
+            max_tokens=max_tokens,
+            **({"extra_headers": extra_headers} if extra_headers else {}),
         )
         answer = completion.choices[0].message.content
-        return Response({'reply': answer, 'source': 'openai' if not is_openrouter_key else 'openrouter'})
-    except Exception:
-        # Hide provider errors from clients, surface as 503
+
+        # Second pass: actions planning
+        actions = {"categories": [], "tasks": []}
+        try:
+            if data.get('confirm'):
+                # Use client-provided actions if present, else regenerate
+                if data.get('actions'):
+                    actions = data['actions'] if isinstance(data['actions'], dict) else json.loads(data['actions'])
+                else:
+                    # Regenerate actions from current input
+                    schema_prompt = (
+                        "Ты парсер намерений для приложения задач. Верни ТОЛЬКО JSON. "
+                        "Схема: {\"categories\":[], \"tasks\":[], \"update_categories\":[], \"update_tasks\":[], \"delete_categories\":[], \"delete_tasks\":[]} "
+                        "categories: [{name, color?, description?}] — создать; "
+                        "tasks: [{title, description?, priority?, deadline?, category?}] — создать; "
+                        "update_categories: [{name, new_name?, color?, description?}]; "
+                        "update_tasks: [{id?|title, title?, description?, priority?, deadline?, category?, is_done?}]; "
+                        "delete_categories: [{name}]; delete_tasks: [{id?|title}]. "
+                        "deadline по возможности ISO8601 (например 2025-09-05T18:00:00Z)."
+                    )
+                    actions_completion = client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": schema_prompt},
+                            {"role": "user", "content": content},
+                        ],
+                        temperature=0,
+                        max_tokens=768,
+                        **({"extra_headers": extra_headers} if extra_headers else {}),
+                    )
+                    raw_json = (actions_completion.choices[0].message.content or "").strip()
+                    try:
+                        actions = json.loads(raw_json)
+                    except Exception:
+                        start = raw_json.find('{'); end = raw_json.rfind('}')
+                        actions = json.loads(raw_json[start:end+1]) if (start != -1 and end != -1 and end > start) else {"categories": [], "tasks": []}
+            else:
+                # Plan only (no execution)
+                schema_prompt = (
+                    "Ты парсер намерений для приложения задач. Верни ТОЛЬКО JSON. "
+                    "Схема: {\"categories\":[], \"tasks\":[], \"update_categories\":[], \"update_tasks\":[], \"delete_categories\":[], \"delete_tasks\":[]} "
+                    "categories: [{name, color?, description?}] — создать; "
+                    "tasks: [{title, description?, priority?, deadline?, category?}] — создать; "
+                    "update_categories: [{name, new_name?, color?, description?}]; "
+                    "update_tasks: [{id?|title, title?, description?, priority?, deadline?, category?, is_done?}]; "
+                    "delete_categories: [{name}]; delete_tasks: [{id?|title}]. "
+                    "deadline по возможности ISO8601."
+                )
+                actions_completion = client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": schema_prompt},
+                        {"role": "user", "content": content},
+                    ],
+                    temperature=0,
+                    max_tokens=768,
+                    **({"extra_headers": extra_headers} if extra_headers else {}),
+                )
+                raw_json = (actions_completion.choices[0].message.content or "").strip()
+                try:
+                    actions = json.loads(raw_json)
+                except Exception:
+                    start = raw_json.find('{'); end = raw_json.rfind('}')
+                    actions = json.loads(raw_json[start:end+1]) if (start != -1 and end != -1 and end > start) else {"categories": [], "tasks": []}
+        except Exception:
+            actions = {"categories": [], "tasks": []}
+
+        created_summary = []
+        # Limits per request
+        max_new_categories = 5
+        max_new_tasks = 20
+
+        # Create or reuse categories only if confirm=True
+        executed = False
+        if data.get('confirm'):
+            executed = True
+            try:
+                cats_in = (actions.get('categories') or [])[:max_new_categories]
+                for cat in cats_in:
+                    name = (cat.get('name') or '').strip()
+                    if not name:
+                        continue
+                    color = cat.get('color') or None
+                    obj, existed = TaskCategory.objects.get_or_create(name=name)
+                    if color and isinstance(color, str) and color.startswith('#') and len(color) in (4, 7):
+                        if obj.color != color:
+                            obj.color = color
+                            obj.save()
+                    # Do not reveal whether category existed before to avoid inference
+                    created_summary.append(f"категория: {obj.name}")
+            except Exception:
+                pass
+
+        # Helper normalization
+        def norm_priority(p):
+            p = (p or '').lower()
+            return p if p in ('low', 'medium', 'high') else 'medium'
+
+        def parse_deadline(value):
+            if not value:
+                return None
+            dt = parse_datetime(value)
+            if dt:
+                if timezone.is_naive(dt):
+                    dt = timezone.make_aware(dt, timezone=timezone.utc)
+                return dt
+            try:
+                dt = datetime.fromisoformat(value)
+                if timezone.is_naive(dt):
+                    dt = timezone.make_aware(dt, timezone=timezone.utc)
+                return dt
+            except Exception:
+                pass
+            # Fallback: dd.mm.yyyy[ HH:MM]
+            try:
+                parts = value.strip().split()
+                date_part = parts[0]
+                day, month, year = [int(x) for x in date_part.split('.')]
+                if len(parts) > 1:
+                    time_part = parts[1]
+                    hh, mm = [int(x) for x in time_part.split(':')]
+                else:
+                    hh, mm = 9, 0  # default 09:00
+                dt = datetime(year, month, day, hh, mm)
+                if timezone.is_naive(dt):
+                    dt = timezone.make_aware(dt, timezone=timezone.utc)
+                return dt
+            except Exception:
+                return None
+
+        # Category lookup cache
+        cat_cache = {c.name.lower(): c for c in TaskCategory.objects.all()}
+
+        # Create tasks only if confirm=True
+        if data.get('confirm'):
+            try:
+                tasks_in = (actions.get('tasks') or [])[:max_new_tasks]
+                new_count = 0
+                for t in tasks_in:
+                    title = (t.get('title') or '').strip()
+                    if len(title) < 3:
+                        continue
+                    desc = t.get('description') or None
+                    prio = norm_priority(t.get('priority'))
+                    cat_name = (t.get('category') or '').strip().lower()
+                    category = cat_cache.get(cat_name) if cat_name else None
+                    deadline_dt = parse_deadline(t.get('deadline'))
+                    Task.objects.create(
+                        user=user,
+                        title=title,
+                        description=desc,
+                        priority=prio,
+                        deadline=deadline_dt,
+                        category=category,
+                    )
+                    new_count += 1
+                if new_count:
+                    created_summary.append(f"задач создано: {new_count}")
+            except Exception:
+                pass
+
+        # Update categories (confirm only)
+        if data.get('confirm'):
+            try:
+                updates = actions.get('update_categories') or []
+                upd_count = 0
+                for u in updates:
+                    name = (u.get('name') or '').strip()
+                    if not name:
+                        continue
+                    cat = TaskCategory.objects.filter(name=name).first()
+                    if not cat:
+                        continue
+                    changed = False
+                    new_name = (u.get('new_name') or '').strip()
+                    if new_name and new_name != cat.name and not TaskCategory.objects.filter(name=new_name).exists():
+                        cat.name = new_name
+                        changed = True
+                    color = u.get('color')
+                    if color and isinstance(color, str) and color.startswith('#') and len(color) in (4, 7) and color != cat.color:
+                        cat.color = color
+                        changed = True
+                    desc = u.get('description')
+                    if desc is not None and desc != cat.description:
+                        cat.description = desc
+                        changed = True
+                    if changed:
+                        cat.save()
+                        upd_count += 1
+                if upd_count:
+                    created_summary.append(f"категорий обновлено: {upd_count}")
+            except Exception:
+                pass
+
+        # Update tasks (confirm only)
+        if data.get('confirm'):
+            try:
+                updates = actions.get('update_tasks') or []
+                upd_count = 0
+                cat_cache = {c.name.lower(): c for c in TaskCategory.objects.all()}
+                for u in updates:
+                    task = None
+                    if u.get('id') is not None:
+                        task = Task.objects.filter(user=user, id=u.get('id')).first()
+                    if not task and u.get('title'):
+                        task = Task.objects.filter(user=user, title__iexact=(u.get('title') or '').strip()).order_by('-created_at').first()
+                    if not task:
+                        continue
+                    changed = False
+                    if 'title' in u and u['title']:
+                        title = u['title'].strip()
+                        if len(title) >= 3 and title != task.title:
+                            task.title = title
+                            changed = True
+                    if 'description' in u:
+                        desc = u['description']
+                        if desc != task.description:
+                            task.description = desc
+                            changed = True
+                    if 'priority' in u:
+                        prio = norm_priority(u.get('priority'))
+                        if prio != task.priority:
+                            task.priority = prio
+                            changed = True
+                    if 'deadline' in u:
+                        deadline_dt = parse_deadline(u.get('deadline'))
+                        if deadline_dt != task.deadline:
+                            task.deadline = deadline_dt
+                            changed = True
+                    if 'category' in u:
+                        cname = (u.get('category') or '').strip().lower()
+                        new_cat = cat_cache.get(cname) if cname else None
+                        if new_cat != task.category:
+                            task.category = new_cat
+                            changed = True
+                    if 'is_done' in u:
+                        is_done = bool(u.get('is_done'))
+                        if is_done != task.is_done:
+                            task.is_done = is_done
+                            changed = True
+                    if changed:
+                        task.save()
+                        upd_count += 1
+                if upd_count:
+                    created_summary.append(f"задач обновлено: {upd_count}")
+            except Exception:
+                pass
+
+        # Delete categories (confirm only)
+        if data.get('confirm'):
+            try:
+                deletions = actions.get('delete_categories') or []
+                del_ok = 0
+                del_blocked = 0
+                for d in deletions:
+                    name = (d.get('name') or '').strip()
+                    if not name:
+                        continue
+                    cat = TaskCategory.objects.filter(name=name).first()
+                    if not cat:
+                        continue
+                    Task.objects.filter(user=user, category=cat).update(category=None)
+                    if Task.objects.filter(category=cat).exclude(user=user).exists():
+                        del_blocked += 1
+                        continue
+                    cat.delete()
+                    del_ok += 1
+                msg_parts = []
+                if del_ok:
+                    msg_parts.append(f"категорий удалено: {del_ok}")
+                if del_blocked:
+                    msg_parts.append(f"категорий не удалено (исп. другими): {del_blocked}")
+                if msg_parts:
+                    created_summary.append("; ".join(msg_parts))
+            except Exception:
+                pass
+
+        # Delete tasks (confirm only)
+        if data.get('confirm'):
+            try:
+                deletions = actions.get('delete_tasks') or []
+                del_count = 0
+                for d in deletions:
+                    task = None
+                    if d.get('id') is not None:
+                        task = Task.objects.filter(user=user, id=d.get('id')).first()
+                    if not task and d.get('title'):
+                        task = Task.objects.filter(user=user, title__iexact=(d.get('title') or '').strip()).order_by('-created_at').first()
+                    if not task:
+                        continue
+                    task.delete()
+                    del_count += 1
+                if del_count:
+                    created_summary.append(f"задач удалено: {del_count}")
+            except Exception:
+                pass
+
+        # Build deterministic assistant reply to avoid misleading claims
+        def summarize_plan(a: dict) -> str:
+            c_c = len(a.get('categories') or [])
+            c_t = len(a.get('tasks') or [])
+            u_c = len(a.get('update_categories') or [])
+            u_t = len(a.get('update_tasks') or [])
+            d_c = len(a.get('delete_categories') or [])
+            d_t = len(a.get('delete_tasks') or [])
+            lines = ["Я подготовил план изменений:"]
+            if any([c_c, c_t]):
+                lines.append(f"- создать: категорий {c_c}, задач {c_t}")
+            if any([u_c, u_t]):
+                lines.append(f"- обновить: категорий {u_c}, задач {u_t}")
+            if any([d_c, d_t]):
+                lines.append(f"- удалить: категорий {d_c}, задач {d_t}")
+            lines.append("Нажмите Подтвердить, чтобы выполнить.")
+            return "\n".join(lines)
+
+        has_actions = any([
+            actions.get('categories'), actions.get('tasks'),
+            actions.get('update_categories'), actions.get('update_tasks'),
+            actions.get('delete_categories'), actions.get('delete_tasks')
+        ])
+
+        if not executed and has_actions:
+            answer = summarize_plan(actions)
+        elif executed:
+            if created_summary:
+                answer = "Изменения выполнены. " + "; ".join(created_summary)
+            else:
+                answer = "Изменения выполнены."
+
+        # Save assistant message
+        ChatMessage.objects.create(session=session, role='assistant', content=answer or '')
+
+        response_payload = {
+            'reply': (answer or '').rstrip(),
+            'source': 'openai' if not is_openrouter_key else 'openrouter',
+            'chat_id': session.id,
+            'requires_confirmation': (not executed and has_actions),
+            'executed': executed,
+        }
+        if not executed:
+            response_payload['plan'] = actions
+        if executed and created_summary:
+            response_payload['created'] = created_summary
+
+        return Response(response_payload)
+    except Exception as e:
+        # In DEBUG provide a hint to speed up troubleshooting (no secrets exposed)
+        if getattr(settings, 'DEBUG', False):
+            return Response({
+                'error': 'Сервис ИИ пока что недоступен',
+                'detail': str(e),
+                'model': model if 'model' in locals() else None,
+                'base_url': base_url if 'base_url' in locals() else None,
+                'provider': 'openrouter' if 'is_openrouter_key' in locals() and is_openrouter_key else 'openai'
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        # Hide provider errors from clients in production
         return Response({'error': 'Сервис ИИ пока что недоступен'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def ai_chats_list(request):
+    """
+    List last 15 chat sessions for the user.
+    """
+    sessions = ChatSession.objects.filter(user=request.user).order_by('-updated_at')[:15]
+    data = [
+        {
+            'id': s.id,
+            'title': s.title,
+            'created_at': s.created_at,
+            'updated_at': s.updated_at,
+        }
+        for s in sessions
+    ]
+    return Response({'chats': data})
+
+
+@api_view(['GET'])
+@permission_classes([permissions.IsAuthenticated])
+def ai_chat_messages(request, chat_id: int):
+    """
+    Get messages for a chat session (last 200).
+    """
+    try:
+        session = ChatSession.objects.get(id=chat_id, user=request.user)
+    except ChatSession.DoesNotExist:
+        return Response({'error': 'chat_not_found'}, status=status.HTTP_404_NOT_FOUND)
+    msgs = session.messages.order_by('created_at')[:200]
+    data = [{'role': m.role, 'content': m.content, 'created_at': m.created_at} for m in msgs]
+    return Response({'chat': {'id': session.id, 'title': session.title}, 'messages': data})

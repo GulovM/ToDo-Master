@@ -15,6 +15,14 @@ from .serializers import (
     UserUpdateSerializer,
     ChangePasswordSerializer
 )
+from decouple import config
+try:
+    # Optional google auth (installed if GOOGLE_CLIENT_ID configured)
+    from google.oauth2 import id_token as google_id_token
+    from google.auth.transport import requests as google_requests
+except Exception:  # pragma: no cover
+    google_id_token = None
+    google_requests = None
 
 
 class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -192,6 +200,82 @@ class ChangePasswordView(APIView):
         return Response({
             'message': 'Password changed successfully'
         }, status=status.HTTP_200_OK)
+
+
+class DeleteAccountView(APIView):
+    """
+    Delete the authenticated user's account. Cascades to tasks via FK.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        user = request.user
+        # Best-effort: attempt to blacklist the refresh token if provided
+        refresh_token = request.data.get('refresh_token')
+        if refresh_token:
+            try:
+                token = RefreshToken(refresh_token)
+                try:
+                    token.blacklist()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        email = user.email
+        user.delete()
+        return Response({'message': f'Account {email} deleted'}, status=status.HTTP_200_OK)
+
+
+class GoogleLoginView(APIView):
+    """
+    Authenticate with Google ID token (Google Identity Services).
+    Expects: {"id_token": "..."}
+    """
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        client_id = config('GOOGLE_CLIENT_ID', default=None)
+        id_tok = (request.data or {}).get('id_token')
+        if not id_tok or not client_id or google_id_token is None or google_requests is None:
+            return Response({'error': 'Google login not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+
+        try:
+            idinfo = google_id_token.verify_oauth2_token(id_tok, google_requests.Request(), client_id)
+            if idinfo.get('iss') not in ['accounts.google.com', 'https://accounts.google.com']:
+                raise ValueError('Wrong issuer')
+            email = idinfo.get('email')
+            if not email:
+                return Response({'error': 'Email missing'}, status=status.HTTP_400_BAD_REQUEST)
+            first_name = (idinfo.get('given_name') or '').strip() or 'User'
+            last_name = (idinfo.get('family_name') or '').strip() or 'Google'
+            username_base = email.split('@')[0]
+            username = username_base
+            # Ensure unique username
+            suffix = 1
+            while User.objects.filter(username=username).exclude(email=email).exists():
+                username = f"{username_base}{suffix}"
+                suffix += 1
+
+            user, created = User.objects.get_or_create(
+                email=email,
+                defaults={'first_name': first_name, 'last_name': last_name, 'username': username}
+            )
+            if created and not user.has_usable_password():
+                user.set_unusable_password()
+                user.save()
+
+            refresh = RefreshToken.for_user(user)
+            user_serializer = UserProfileSerializer(user)
+            return Response({
+                'message': 'Login successful',
+                'user': user_serializer.data,
+                'tokens': {
+                    'refresh': str(refresh),
+                    'access': str(refresh.access_token),
+                }
+            })
+        except Exception as e:
+            return Response({'error': 'Invalid Google token', 'detail': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 @api_view(['GET'])

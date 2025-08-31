@@ -22,6 +22,8 @@ urlpatterns = [
     path('search/', views.search_tasks, name='search_tasks'),
     # AI assistant
     path('ai/assist/', views.ai_assist, name='ai_assist'),
+    path('ai/chats/', views.ai_chats_list, name='ai_chats_list'),
+    path('ai/chats/<int:chat_id>/', views.ai_chat_messages, name='ai_chat_messages'),
     
     # Health check
     path('health/', views.health_check, name='health_check'),

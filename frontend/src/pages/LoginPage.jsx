@@ -7,7 +7,8 @@ import LoadingSpinner from '../components/common/LoadingSpinner.jsx';
 const LoginPage = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, clearError, isAuthenticated, error } = useAuth();
+  const { login, loginWithGoogle, clearError, isAuthenticated, error } = useAuth();
+  const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID;
   
   const [formData, setFormData] = useState({
     email: '',
@@ -93,6 +94,30 @@ const LoginPage = () => {
       console.error('Login error:', error);
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleGoogle = async () => {
+    try {
+      if (!window.google || !GOOGLE_CLIENT_ID) {
+        alert('Google Sign-In недоступен: не задан VITE_GOOGLE_CLIENT_ID');
+        return;
+      }
+      window.google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: async (resp) => {
+          const idToken = resp.credential;
+          if (!idToken) return;
+          const result = await loginWithGoogle(idToken);
+          if (result.success) {
+            const from = location.state?.from?.pathname || '/dashboard';
+            navigate(from, { replace: true });
+          }
+        },
+      });
+      window.google.accounts.id.prompt();
+    } catch (e) {
+      console.error('Google login failed', e);
     }
   };
 
@@ -269,23 +294,31 @@ const LoginPage = () => {
                 </div>
               </div>
 
-              {/* Submit Button */}
-              <div>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-xl text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl"
-                >
-                  {isSubmitting ? (
-                    <>
-                      <LoadingSpinner size="sm" className="mr-2" />
-                      Вход...
-                    </>
-                  ) : (
-                    'Войти в аккаунт'
-                  )}
-                </button>
-              </div>
+            {/* Submit Button */}
+            <div>
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-xl text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl"
+              >
+                {isSubmitting ? (
+                  <>
+                    <LoadingSpinner size="sm" className="mr-2" />
+                    Вход...
+                  </>
+                ) : (
+                  'Войти в аккаунт'
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={handleGoogle}
+                className="mt-3 w-full py-2.5 rounded-xl border border-gray-300 bg-white hover:bg-gray-50 text-gray-800 flex items-center justify-center gap-2"
+              >
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="G" className="h-5 w-5" />
+                Войти с Google
+              </button>
+            </div>
             </form>
 
             {/* Register Link */}

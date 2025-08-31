@@ -160,3 +160,47 @@ class Task(models.Model):
             'high': '#EF4444',    # Red
         }
         return colors.get(self.priority, '#6B7280')  # Gray default
+
+
+class ChatSession(models.Model):
+    """
+    AI chat session per user.
+    Keeps short metadata and timestamps.
+    """
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='ai_chat_sessions'
+    )
+    title = models.CharField(max_length=120)
+    created_at = models.DateTimeField(default=timezone.now)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'ai_chat_sessions'
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f"Chat {self.id}: {self.title}"
+
+
+class ChatMessage(models.Model):
+    """
+    Individual messages in a chat session.
+    role: 'user' | 'assistant'
+    """
+    session = models.ForeignKey(
+        ChatSession,
+        on_delete=models.CASCADE,
+        related_name='messages'
+    )
+    role = models.CharField(max_length=16)
+    content = models.TextField()
+    created_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = 'ai_chat_messages'
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"{self.role}: {self.content[:30]}..."

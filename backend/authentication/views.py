@@ -236,8 +236,12 @@ class GoogleLoginView(APIView):
     def post(self, request):
         client_id = config('GOOGLE_CLIENT_ID', default=None)
         id_tok = (request.data or {}).get('id_token')
-        if not id_tok or not client_id or google_id_token is None or google_requests is None:
-            return Response({'error': 'Google login not configured'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        if not id_tok:
+            return Response({'error': 'id_token_missing'}, status=status.HTTP_400_BAD_REQUEST)
+        if not client_id:
+            return Response({'error': 'client_id_missing'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        if google_id_token is None or google_requests is None:
+            return Response({'error': 'google_auth_library_missing'}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
 
         try:
             idinfo = google_id_token.verify_oauth2_token(id_tok, google_requests.Request(), client_id)

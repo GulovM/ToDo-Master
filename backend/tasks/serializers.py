@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.utils import timezone
+from django.db import models
 from .models import Task, TaskCategory
 
 
@@ -8,17 +9,66 @@ class TaskCategorySerializer(serializers.ModelSerializer):
     Serializer for TaskCategory model
     """
     task_count = serializers.SerializerMethodField()
+    is_global = serializers.SerializerMethodField()
+    can_edit = serializers.SerializerMethodField()
     
     class Meta:
         model = TaskCategory
-        fields = ('id', 'name', 'color', 'description', 'created_at', 'task_count')
+        fields = ('id', 'name', 'color', 'description', 'created_at', 'task_count', 'is_global', 'can_edit')
         read_only_fields = ('id', 'created_at')
-    
+
     def get_task_count(self, obj):
         """
         Get number of tasks in this category
         """
+        # Prefer annotated value if present (per-user count provided by view)
+        if hasattr(obj, 'task_count') and obj.task_count is not None:
+            try:
+                return int(obj.task_count)
+            except Exception:
+                pass
+        # Fallback: count only current user's tasks in this category
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if user and user.is_authenticated:
+            return obj.tasks.filter(user=user).count()
         return obj.tasks.count()
+
+    def get_is_global(self, obj):
+        return obj.owner_id is None
+
+    def get_can_edit(self, obj):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        return bool(user and user.is_authenticated and obj.owner_id == user.id)
+
+    def validate_name(self, value: str):
+        name = (value or '').strip()
+        if not name:
+            raise serializers.ValidationError('Name is required')
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        # Prevent creating a user category with the same name as an existing global one
+        if self.instance is None and user and TaskCategory.objects.filter(owner__isnull=True, name__iexact=name).exists():
+            raise serializers.ValidationError('Category with this name already exists globally')
+        # Enforce per-owner uniqueness (case-insensitive check to be safe)
+        qs = TaskCategory.objects.filter(name__iexact=name)
+        if user:
+            qs = qs.filter(owner=user)
+        else:
+            qs = qs.filter(owner__isnull=True)
+        if self.instance is not None:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError('You already have a category with this name')
+        return name
+
+    def create(self, validated_data):
+        # Attach current user as owner (user-scoped category)
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated:
+            validated_data['owner'] = request.user
+        return super().create(validated_data)
 
 
 class TaskListSerializer(serializers.ModelSerializer):
@@ -112,8 +162,14 @@ class TaskCreateUpdateSerializer(serializers.ModelSerializer):
         """
         Validate category exists
         """
-        if value and not TaskCategory.objects.filter(id=value.id).exists():
-            raise serializers.ValidationError("Invalid category selected.")
+        if value:
+            # Only allow categories that are global or owned by the current user
+            user = self.context['request'].user
+            allowed = TaskCategory.objects.filter(id=value.id).filter(
+                models.Q(owner__isnull=True) | models.Q(owner=user)
+            ).exists()
+            if not allowed:
+                raise serializers.ValidationError("Invalid category selected.")
         return value
     
     def create(self, validated_data):

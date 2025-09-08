@@ -9,8 +9,15 @@ class TaskCategory(models.Model):
     """
     name = models.CharField(
         max_length=50,
-        unique=True,
         help_text='Category name (e.g., Work, Personal, Study)'
+    )
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='categories',
+        null=True,
+        blank=True,
+        help_text='Owner of category (null for global)'
     )
     color = models.CharField(
         max_length=7,
@@ -31,6 +38,9 @@ class TaskCategory(models.Model):
         verbose_name = 'Task Category'
         verbose_name_plural = 'Task Categories'
         ordering = ['name']
+        constraints = [
+            models.UniqueConstraint(fields=['name', 'owner'], name='unique_category_per_owner')
+        ]
     
     def __str__(self):
         return self.name

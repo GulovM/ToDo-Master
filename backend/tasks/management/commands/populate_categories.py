@@ -8,41 +8,22 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         categories = [
             {
-                'name': 'Work',
+                'name': 'Работа',
                 'color': '#EF4444',  # Red
-                'description': 'Work-related tasks and professional activities'
+                'description': 'Рабочие задачи и профессиональные активности'
             },
             {
-                'name': 'Personal',
+                'name': 'Личные',
                 'color': '#10B981',  # Green
-                'description': 'Personal tasks and life activities'
-            },
-            {
-                'name': 'Study',
-                'color': '#3B82F6',  # Blue
-                'description': 'Educational and learning activities'
-            },
-            {
-                'name': 'Health',
-                'color': '#F59E0B',  # Yellow
-                'description': 'Health and fitness related tasks'
-            },
-            {
-                'name': 'Shopping',
-                'color': '#8B5CF6',  # Purple
-                'description': 'Shopping lists and purchases'
-            },
-            {
-                'name': 'Home',
-                'color': '#06B6D4',  # Cyan
-                'description': 'Household chores and maintenance'
+                'description': 'Личные задачи и жизненные активности'
             },
         ]
         
         created_count = 0
         for category_data in categories:
+            # Create as global (owner=None)
             category, created = TaskCategory.objects.get_or_create(
-                name=category_data['name'],
+                name=category_data['name'], owner=None,
                 defaults={
                     'color': category_data['color'],
                     'description': category_data['description']

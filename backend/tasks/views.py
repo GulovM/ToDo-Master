@@ -37,8 +37,11 @@ class TaskCategoryListCreateView(generics.ListCreateAPIView):
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
-        return TaskCategory.objects.annotate(
-            task_count=Count('tasks')
+        # return global categories (owner is null) + user's own
+        return TaskCategory.objects.filter(
+            Q(owner__isnull=True) | Q(owner=self.request.user)
+        ).annotate(
+            task_count=Count('tasks', filter=Q(tasks__user=self.request.user))
         ).order_by('name')
 
 
@@ -50,7 +53,24 @@ class TaskCategoryDetailView(generics.RetrieveUpdateDestroyAPIView):
     permission_classes = [permissions.IsAuthenticated]
     
     def get_queryset(self):
-        return TaskCategory.objects.all()
+        # allow retrieving only global or own categories
+        return TaskCategory.objects.filter(
+            Q(owner__isnull=True) | Q(owner=self.request.user)
+        )
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        # Only owner can update; global categories are read-only
+        if instance.owner_id is None or instance.owner_id != request.user.id:
+            return Response({'detail': 'Not allowed'}, status=status.HTTP_403_FORBIDDEN)
+        return super().update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        # Only owner can delete; global categories cannot be deleted
+        if instance.owner_id is None or instance.owner_id != request.user.id:
+            return Response({'detail': 'Not allowed'}, status=status.HTTP_403_FORBIDDEN)
+        return super().destroy(request, *args, **kwargs)
 
 
 class TaskListCreateView(generics.ListCreateAPIView):
@@ -573,9 +593,20 @@ def ai_assist(request):
                     if not name:
                         continue
                     color = cat.get('color') or None
-                    obj, existed = TaskCategory.objects.get_or_create(name=name)
-                    if color and isinstance(color, str) and color.startswith('#') and len(color) in (4, 7):
-                        if obj.color != color:
+                    # Prefer an existing accessible category (user-owned first, then global)
+                    obj = TaskCategory.objects.filter(
+                        (Q(owner=request.user) | Q(owner__isnull=True)) & Q(name__iexact=name)
+                    ).order_by('-owner').first()
+                    if not obj:
+                        # Create a user-owned category
+                        obj = TaskCategory.objects.create(
+                            name=name,
+                            color=(color if (isinstance(color, str) and color.startswith('#') and len(color) in (4, 7)) else '#3B82F6'),
+                            owner=request.user
+                        )
+                    else:
+                        # Update color only for user's own categories
+                        if obj.owner_id == request.user.id and color and isinstance(color, str) and color.startswith('#') and len(color) in (4, 7) and obj.color != color:
                             obj.color = color
                             obj.save()
                     # Do not reveal whether category existed before to avoid inference
@@ -620,8 +651,8 @@ def ai_assist(request):
             except Exception:
                 return None
 
-        # Category lookup cache
-        cat_cache = {c.name.lower(): c for c in TaskCategory.objects.all()}
+        # Category lookup cache (only categories visible to the user)
+        cat_cache = {c.name.lower(): c for c in TaskCategory.objects.filter(Q(owner__isnull=True) | Q(owner=user))}
 
         # Create tasks only if confirm=True
         if data.get('confirm'):
@@ -660,12 +691,13 @@ def ai_assist(request):
                     name = (u.get('name') or '').strip()
                     if not name:
                         continue
-                    cat = TaskCategory.objects.filter(name=name).first()
+                    # Only allow updating user's own categories
+                    cat = TaskCategory.objects.filter(owner=user, name__iexact=name).first()
                     if not cat:
                         continue
                     changed = False
                     new_name = (u.get('new_name') or '').strip()
-                    if new_name and new_name != cat.name and not TaskCategory.objects.filter(name=new_name).exists():
+                    if new_name and new_name != cat.name and not TaskCategory.objects.filter(owner=user, name__iexact=new_name).exists():
                         cat.name = new_name
                         changed = True
                     color = u.get('color')
@@ -689,7 +721,7 @@ def ai_assist(request):
             try:
                 updates = actions.get('update_tasks') or []
                 upd_count = 0
-                cat_cache = {c.name.lower(): c for c in TaskCategory.objects.all()}
+                cat_cache = {c.name.lower(): c for c in TaskCategory.objects.filter(Q(owner__isnull=True) | Q(owner=user))}
                 for u in updates:
                     task = None
                     if u.get('id') is not None:
@@ -743,25 +775,20 @@ def ai_assist(request):
             try:
                 deletions = actions.get('delete_categories') or []
                 del_ok = 0
-                del_blocked = 0
                 for d in deletions:
                     name = (d.get('name') or '').strip()
                     if not name:
                         continue
-                    cat = TaskCategory.objects.filter(name=name).first()
+                    # Only delete user's own categories
+                    cat = TaskCategory.objects.filter(owner=user, name__iexact=name).first()
                     if not cat:
                         continue
                     Task.objects.filter(user=user, category=cat).update(category=None)
-                    if Task.objects.filter(category=cat).exclude(user=user).exists():
-                        del_blocked += 1
-                        continue
                     cat.delete()
                     del_ok += 1
                 msg_parts = []
                 if del_ok:
                     msg_parts.append(f"категорий удалено: {del_ok}")
-                if del_blocked:
-                    msg_parts.append(f"категорий не удалено (исп. другими): {del_blocked}")
                 if msg_parts:
                     created_summary.append("; ".join(msg_parts))
             except Exception:

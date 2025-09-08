@@ -51,6 +51,8 @@ const CategoriesManager = () => {
   };
 
   const handleDelete = async (id) => {
+    const cat = categories.find((x) => x.id === id);
+    if (cat && (cat.is_global === true || cat.can_edit === false)) return;
     if (!confirm('Удалить эту категорию?')) return;
     await deleteCategory(id);
   };
@@ -143,7 +145,12 @@ const CategoriesManager = () => {
               <div className="flex items-center md:col-span-4">
                 <span className="inline-block h-3 w-3 rounded-full mr-2" style={{ backgroundColor: c.color }} />
                 <div className="min-w-0">
-                  <div className="font-medium text-gray-900 truncate">{c.name}</div>
+                  <div className="font-medium text-gray-900 truncate">
+                    {c.name}
+                    {c.is_global && (
+                      <span className="ml-2 text-xs text-gray-500 align-middle">(общая)</span>
+                    )}
+                  </div>
                   <div className="text-xs text-gray-500 md:hidden mt-0.5">{c.task_count || 0} задач</div>
                 </div>
               </div>
@@ -157,8 +164,22 @@ const CategoriesManager = () => {
               </div>
               {/* Actions */}
               <div className="mt-3 md:mt-0 md:col-span-2 flex items-center justify-start md:justify-end space-x-2">
-                <button onClick={() => startEdit(c)} className="btn-outline text-xs">Изменить</button>
-                <button onClick={() => handleDelete(c.id)} className="btn-danger text-xs">Удалить</button>
+                <button
+                  onClick={() => startEdit(c)}
+                  disabled={c.is_global === true || c.can_edit === false}
+                  className={cn('btn-outline text-xs', (c.is_global === true || c.can_edit === false) && 'opacity-50 cursor-not-allowed')}
+                  title={c.is_global ? 'Глобальные категории нельзя менять' : undefined}
+                >
+                  Изменить
+                </button>
+                <button
+                  onClick={() => handleDelete(c.id)}
+                  disabled={c.is_global === true || c.can_edit === false}
+                  className={cn('btn-danger text-xs', (c.is_global === true || c.can_edit === false) && 'opacity-50 cursor-not-allowed')}
+                  title={c.is_global ? 'Глобальные категории нельзя удалять' : undefined}
+                >
+                  Удалить
+                </button>
               </div>
             </div>
           ))}

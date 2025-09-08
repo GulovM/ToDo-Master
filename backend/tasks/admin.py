@@ -8,8 +8,8 @@ class TaskCategoryAdmin(admin.ModelAdmin):
     """
     Admin interface for TaskCategory model
     """
-    list_display = ('name', 'colored_name', 'task_count', 'created_at')
-    list_filter = ('created_at',)
+    list_display = ('name', 'colored_name', 'owner', 'task_count', 'created_at')
+    list_filter = ('created_at', 'owner')
     search_fields = ('name', 'description')
     ordering = ('name',)
     readonly_fields = ('created_at',)
